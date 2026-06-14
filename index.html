@@ -395,6 +395,9 @@ function handleNetData(fromId, data){
         const peerList = Object.keys(connections).filter(id => id !== fromId).map(id => ({
           id, name: remotePlayers[id] ? remotePlayers[id].name : '???'
         }));
+        // IMPORTANT : l'hôte n'a pas de connexion "à lui-même" dans `connections`,
+        // donc sans cette ligne le nouveau venu ne sait jamais que l'hôte existe.
+        peerList.push({id: myId, name: myName});
         connections[fromId].send({
           type:'welcome',
           peers: peerList,
@@ -417,6 +420,12 @@ function handleNetData(fromId, data){
       data.peers.forEach(p => {
         if (p.id === myId) return;
         createRemotePlayer(p.id, p.name);
+        if (connections[p.id]){
+          // Connexion déjà existante (typiquement : l'hôte, auquel on est déjà relié) ->
+          // pas besoin d'ouvrir une 2e connexion data, on lance juste l'appel vocal.
+          callPeer(p.id);
+          return;
+        }
         const c = peer.connect(p.id, {reliable:true});
         registerDataConnection(c);
         c.on('open', () => { c.send({type:'hello', name: myName, id: myId}); callPeer(p.id); });
