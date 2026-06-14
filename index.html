@@ -5,10 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Dorm Room 3D</title>
 
-<!-- PeerJS pour le réseau P2P (data + voix WebRTC) -->
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
-<!-- Three.js via importmap -->
 <script type="importmap">
 {
   "imports": {
@@ -151,7 +149,6 @@
 </head>
 <body>
 
-<!-- ===================== ECRAN DE CONNEXION ===================== -->
 <div id="login">
   <div class="card">
     <h1>🛏️ Dorm Room 3D</h1>
@@ -165,10 +162,8 @@
   </div>
 </div>
 
-<!-- ===================== CANVAS 3D ===================== -->
 <canvas id="c"></canvas>
 
-<!-- ===================== HUD / CONTROLES ===================== -->
 <div id="hud">
   <div id="hitFlash"></div>
   <div id="deadOverlay">💀 ÉLIMINÉ — réapparition...</div>
@@ -176,17 +171,14 @@
   <div id="voiceBadge">🎙️ Voix active</div>
   <div id="crosshair"></div>
 
-  <!-- Joysticks -->
   <div class="stick-zone" id="moveZone"><div class="stick-knob"></div></div>
   <div class="stick-zone" id="leftHandZone"><div class="stick-knob"></div></div>
   <div class="stick-zone" id="rightHandZone"><div class="stick-knob"></div></div>
 
-  <!-- Boutons -->
   <button class="action-btn" id="jumpBtn">SAUT</button>
   <button class="action-btn" id="dropBtn">LÂCHER</button>
   <button class="action-btn" id="penToggle">🖊️ MAKER PEN: OFF</button>
 
-  <!-- Menu de construction -->
   <div id="buildMenu">
     <div class="build-item selected" data-item="cube"><div class="swatch" style="background:#e07b39"></div>CUBE</div>
     <div class="build-item" data-item="chair"><div class="swatch" style="background:#8a5a44"></div>CHAISE</div>
@@ -195,26 +187,10 @@
   </div>
 </div>
 
-<!-- Conteneur invisible pour les flux audio distants -->
 <div id="audioContainer" style="display:none"></div>
 
 <script type="module">
 import * as THREE from 'three';
-
-/* =====================================================================================
-   DORM ROOM 3D — version améliorée
-   -------------------------------------------------------------------------------------
-   Améliorations principales par rapport à la base :
-   - Réseau optimisé : envoi d'état à fréquence fixe (12 Hz) + interpolation (lerp) des
-     joueurs distants pour un mouvement fluide même avec peu de paquets.
-   - Topologie P2P "full-mesh" : l'hôte transmet la liste des participants pour que
-     chaque client se connecte directement aux autres (data + appel vocal WebRTC).
-   - Nouvel objet "Balle Rebondissante" avec physique simple (gravité + restitution sur
-     sol et murs), synchronisée par l'hôte (autorité réseau légère).
-   - Outil "GOMME" dans le Maker Pen pour supprimer les objets construits.
-   - Effets visuels de coup : flash plein écran rouge + particules à l'impact.
-   - Anti-rebond de l'épée conservé (cooldown 1.5s + impulsion vers l'avant).
-   ===================================================================================== */
 
 /* ----------------------------- CONSTANTES GLOBALES ----------------------------- */
 const ROOM_HALF      = 6;          // pièce de 12x12
@@ -234,7 +210,7 @@ const DROP_COOLDOWN  = 1.5;
 let scene, camera, renderer, clock;
 let myId = null, myName = "Joueur";
 let isHost = false;
-let hostId = null;        // id du pair faisant office d'hôte/relais (= myId si on est l'hôte)
+let hostId = null;        
 let roomCode = "";
 let peer = null;
 const connections = {};   // peerId -> DataConnection
@@ -251,16 +227,16 @@ const player = {
   pos: new THREE.Vector3(0, PLAYER_HEIGHT, 3),
   velY: 0,
   grounded: true,
-  lon: 0, lat: 0,        // orientation caméra (coordonnées sphériques)
+  lon: 0, lat: 0,        
 };
 
 /* --- mains locales (suivent les joysticks) --- */
 let leftHandMesh, rightHandMesh;
-const handOffset = { left: {x:0,y:0}, right: {x:0,y:0} }; // -1..1 -> décalage local
+const handOffset = { left: {x:0,y:0}, right: {x:0,y:0} }; 
 const prevHandPos = { left: new THREE.Vector3(), right: new THREE.Vector3() };
 
 /* --- épée --- */
-let sword, swordHolder = null;     // swordHolder = peerId du porteur ('me' = local), null = au sol
+let sword, swordHolder = null;     
 let swordVel = new THREE.Vector3();
 let dropCooldown = 0;
 
@@ -273,7 +249,7 @@ let bounceBall, ballVel = new THREE.Vector3(1.5, 0, 1.0);
 const BALL_RADIUS = 0.4, BALL_RESTITUTION = 0.72;
 
 /* --- effets visuels (particules de coup) --- */
-const hitEffects = []; // {mesh, life}
+const hitEffects = []; 
 
 /* --- Maker Pen --- */
 let makerPenOn = false;
@@ -320,9 +296,8 @@ function startPeer(targetCode, host){
     peer.on('error', err => statusEl.textContent = "Erreur : " + err.type + " (room introuvable ?)");
   }
 
-  // Connexions entrantes : pour l'hôte, ce sont tous les clients de la room.
   peer.on('connection', conn => registerDataConnection(conn));
-  // Réception d'appels vocaux entrants
+  
   peer.on('call', call => {
     call.answer(localStream || undefined);
     call.on('stream', stream => attachRemoteAudio(call.peer, stream));
@@ -331,7 +306,6 @@ function startPeer(targetCode, host){
 }
 
 async function enterGame(){
-  // Demande micro pour le chat vocal
   try{
     localStream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
   }catch(e){
@@ -349,13 +323,13 @@ async function enterGame(){
 }
 
 /* ===================================================================================
-   2. RESEAU P2P (PeerJS) — full-mesh data + voix
+   2. RESEAU P2P (PeerJS) — correction de l'enregistrement et du broadcast
    =================================================================================== */
 function registerDataConnection(conn){
-  connections[conn.peer] = conn;
+  connections[conn.peer] = conn; // [CORRECTION] Enregistre TOUJOURS la connexion bidirectionnellement (pour l'hôte ET le client)
+  
   conn.on('open', () => {
     if (isHost){
-      // Envoie l'état actuel de la room (constructions, balle, épée) au nouveau venu.
       conn.send({
         type:'sync',
         builds: Object.entries(builtObjects).map(([bid,m]) => ({
@@ -367,19 +341,17 @@ function registerDataConnection(conn){
         sword: { holder: swordHolder === 'me' ? myId : swordHolder,
                  pos:[sword.position.x,sword.position.y,sword.position.z] }
       });
-      // Petit délai pour laisser le DataChannel/MediaChannel du client se stabiliser.
-      setTimeout(() => callPeer(conn.peer), 600);
     } else {
-      // Le client appelle l'hôte pour établir le chat vocal.
-      callPeer(conn.peer);
+      // [CORRECTION VOICE] Seul le client initie l'appel WebRTC vers l'hôte pour éviter le conflit d'appel simultané
+      setTimeout(() => callPeer(conn.peer), 500);
     }
   });
+  
   conn.on('data', data => handleNetData(conn, data));
   conn.on('close', () => {
     removeRemotePlayer(conn.peer);
     if (isHost){
-      // Informe les autres clients que ce joueur est parti.
-      sendToNetwork({type:'leave', id: conn.peer});
+      broadcast({type:'leave', id: conn.peer});
     }
   });
 }
@@ -402,24 +374,16 @@ function attachRemoteAudio(peerId, stream){
   audio.srcObject = stream;
 }
 
-// Envoie un message dans le réseau :
-// - si on est l'hôte, on l'envoie directement à tous les clients connectés
-// - si on est un client, on l'envoie à l'hôte, qui le relaiera aux autres
-function sendToNetwork(data){
-  if (isHost){
-    for (const id in connections){
-      if (connections[id].open) connections[id].send(data);
+// [CORRECTION BROADCAST] Implémentation propre et sécurisée de la diffusion globale
+function broadcast(data) {
+  for (const id in connections) {
+    if (connections[id] && connections[id].open) {
+      connections[id].send(data);
     }
-  } else {
-    const hostConn = connections[hostId];
-    if (hostConn && hostConn.open) hostConn.send(data);
   }
 }
 
 function handleNetData(conn, data){
-  // RELAIS : l'hôte retransmet tout message reçu à tous les autres clients
-  // (sauf à celui qui l'a envoyé). C'est ce qui garantit que TOUT LE MONDE
-  // reçoit les infos de TOUT LE MONDE, même les joueurs arrivés avant soi.
   if (isHost){
     for (const id in connections){
       if (id !== conn.peer && connections[id].open) connections[id].send(data);
@@ -427,10 +391,7 @@ function handleNetData(conn, data){
   }
 
   switch(data.type){
-
     case 'sync': {
-      // Reçu uniquement par un nouveau client, directement depuis l'hôte :
-      // synchronise l'état actuel de la room (constructions, balle, épée).
       data.builds.forEach(b => spawnBuildItem(b.item, new THREE.Vector3(...b.pos), b.rot, b.color, b.id, false));
       bounceBall.position.set(...data.ball.pos);
       ballVel.set(...data.ball.vel);
@@ -443,11 +404,9 @@ function handleNetData(conn, data){
     }
 
     case 'state': {
-      if (data.id === myId) return; // sécurité anti-écho
-      // Création paresseuse : si on ne connaît pas encore ce joueur (ex: il était
-      // déjà dans la room avant nous), on crée son avatar dès son premier paquet.
-      let rp = remotePlayers[data.id];
-      if (!rp) rp = createRemotePlayer(data.id, data.name);
+      if (data.id === myId) return; 
+      let rp = remotePlayers[conn.peer]; // [CORRECTION] Utilise conn.peer pour associer fidèlement les paquets reçus
+      if (!rp) rp = createRemotePlayer(conn.peer, data.name || "Joueur");
       if (!rp) return;
       rp.target.pos.set(data.pos[0], data.pos[1], data.pos[2]);
       rp.target.rotY = data.rotY;
@@ -459,7 +418,7 @@ function handleNetData(conn, data){
 
     case 'sword': {
       if (data.id === myId) return;
-      if (data.action === 'pickup') swordHolder = data.id;
+      if (data.action === 'pickup') swordHolder = conn.peer;
       if (data.action === 'drop'){
         swordHolder = null;
         sword.position.set(data.pos[0], data.pos[1], data.pos[2]);
@@ -483,7 +442,7 @@ function handleNetData(conn, data){
       removeBuildItem(data.id, false);
       break;
 
-    case 'ball': // correction périodique envoyée par l'hôte (autorité réseau)
+    case 'ball': 
       if (!isHost){
         bounceBall.position.lerp(new THREE.Vector3(...data.pos), 0.4);
         ballVel.set(...data.vel);
@@ -516,11 +475,9 @@ function initScene(){
   camera.position.copy(player.pos);
 
   renderer = new THREE.WebGLRenderer({canvas: document.getElementById('c'), antialias:true});
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75)); // optimisation mobile
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75)); 
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = false; // désactivé pour la perf mobile
 
-  // Lumières
   scene.add(new THREE.AmbientLight(0xffffff, 0.65));
   const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
   dirLight.position.set(4, 8, 3);
@@ -556,19 +513,16 @@ function buildRoom(){
   scene.add(floor);
   buildableTargets.push(floor);
 
-  // tapis vert central
   const carpet = new THREE.Mesh(new THREE.PlaneGeometry(6,6), new THREE.MeshStandardMaterial({color:0x2e8b57}));
   carpet.rotation.x = -Math.PI/2;
   carpet.position.y = 0.01;
   scene.add(carpet);
 
-  // plafond
   const ceil = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF*2, ROOM_HALF*2), new THREE.MeshStandardMaterial({color:0xeeeeee}));
   ceil.rotation.x = Math.PI/2;
   ceil.position.y = WALL_HEIGHT;
   scene.add(ceil);
 
-  // murs : Nord = bleu, Est = orange (avec miroir), Sud = blanc (avec porte), Ouest = blanc
   const wallGeo = new THREE.PlaneGeometry(ROOM_HALF*2, WALL_HEIGHT);
   const matBlue   = new THREE.MeshStandardMaterial({color:0x3d6ea5});
   const matOrange = new THREE.MeshStandardMaterial({color:0xd9803a});
@@ -593,20 +547,17 @@ function buildRoom(){
   west.rotation.y = Math.PI/2;
   scene.add(west); buildableTargets.push(west);
 
-  // miroir décoratif sur le mur Est
   const mirror = new THREE.Mesh(new THREE.PlaneGeometry(2,3),
     new THREE.MeshStandardMaterial({color:0xcfe8ff, metalness:0.6, roughness:0.15, emissive:0x99c2ff, emissiveIntensity:0.15}));
   mirror.position.set(ROOM_HALF-0.05, 2.4, -1);
   mirror.rotation.y = -Math.PI/2;
   scene.add(mirror);
 
-  // cadre du miroir
   const frame = new THREE.Mesh(new THREE.PlaneGeometry(2.2,3.2), new THREE.MeshStandardMaterial({color:0x5a4632}));
   frame.position.set(ROOM_HALF-0.06, 2.4, -1);
   frame.rotation.y = -Math.PI/2;
   scene.add(frame);
 
-  // porte décorative sur le mur Sud
   const door = new THREE.Mesh(new THREE.PlaneGeometry(1.4,2.6), new THREE.MeshStandardMaterial({color:0x4a3a2a}));
   door.position.set(-3.5, 1.3, ROOM_HALF-0.04);
   door.rotation.y = Math.PI;
@@ -616,7 +567,6 @@ function buildRoom(){
   doorFrame.rotation.y = Math.PI;
   scene.add(doorFrame);
 
-  // lit (sommier + matelas + oreiller)
   const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.5,3.2), new THREE.MeshStandardMaterial({color:0x6b4a30}));
   bedFrame.position.set(-4, 0.25, -3.8);
   scene.add(bedFrame); buildableTargets.push(bedFrame);
@@ -639,7 +589,7 @@ function buildSword(){
   const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.9,0.02), new THREE.MeshStandardMaterial({color:0xcfd6dc, metalness:0.7, roughness:0.25}));
   blade.position.y = 0.45;
   group.add(handle, guard, blade);
-  group.rotation.z = Math.PI/2; // posée à plat au sol
+  group.rotation.z = Math.PI/2; 
   return group;
 }
 
@@ -647,7 +597,6 @@ function buildBall(){
   return new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 20, 20), new THREE.MeshStandardMaterial({color:0xe6453c}));
 }
 
-// Crée un objet construit (cube / chaise / canapé)
 function spawnBuildItem(itemType, pos, rotY, colorHex, buildId, isMine){
   let mesh;
   const color = new THREE.Color(colorHex);
@@ -681,7 +630,7 @@ function spawnBuildItem(itemType, pos, rotY, colorHex, buildId, isMine){
     mesh.add(base, back, armL, armR);
     mesh.position.copy(pos);
   } else {
-    return; // type inconnu
+    return; 
   }
 
   mesh.rotation.y = rotY;
@@ -733,14 +682,13 @@ function createRemotePlayer(id, name){
 
   const group = new THREE.Group();
 
-  // tête ovale texturée (visage simple dessiné sur canvas)
   const faceCnv = document.createElement('canvas');
   faceCnv.width = 128; faceCnv.height = 128;
   const fctx = faceCnv.getContext('2d');
   fctx.fillStyle = '#ffd1a8'; fctx.fillRect(0,0,128,128);
   fctx.fillStyle = '#333';
-  fctx.fillRect(35,45,15,15); fctx.fillRect(78,45,15,15); // yeux
-  fctx.fillRect(50,80,28,8); // bouche
+  fctx.fillRect(35,45,15,15); fctx.fillRect(78,45,15,15); 
+  fctx.fillRect(50,80,28,8); 
   const faceTex = new THREE.CanvasTexture(faceCnv);
 
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.28,16,16), new THREE.MeshStandardMaterial({map:faceTex}));
@@ -766,6 +714,7 @@ function createRemotePlayer(id, name){
     group, head, torso, leftHand: lh, rightHand: rh, name,
     target: { pos: new THREE.Vector3(0,PLAYER_HEIGHT,0), rotY:0, left:{x:0,y:0}, right:{x:0,y:0}, dead:false }
   };
+  return remotePlayers[id];
 }
 
 /* ===================================================================================
@@ -775,7 +724,7 @@ const moveStick  = {x:0, y:0};
 const lhStick    = {x:0, y:0};
 const rhStick    = {x:0, y:0};
 let jumpPressed  = false;
-let cameraTouch  = null; // {id, lastX, lastY, moved}
+let cameraTouch  = null; 
 
 function setupJoystick(zoneEl, knobEl, target, radiusFactor=0.42){
   let activeId = null;
@@ -822,16 +771,13 @@ function initControls(){
   setupJoystick(document.getElementById('leftHandZone'), document.querySelector('#leftHandZone .stick-knob'), lhStick);
   setupJoystick(document.getElementById('rightHandZone'), document.querySelector('#rightHandZone .stick-knob'), rhStick);
 
-  // Bouton SAUT
   const jumpBtn = document.getElementById('jumpBtn');
   jumpBtn.addEventListener('pointerdown', e => { jumpPressed = true; e.stopPropagation(); });
 
-  // Bouton LACHER (épée)
   const dropBtn = document.getElementById('dropBtn');
   dropBtn.addEventListener('pointerdown', e => {
     e.stopPropagation();
     if (swordHolder === 'me'){
-      // calcule la direction "avant" du joueur pour propulser l'épée
       const fwd = getForwardVector();
       swordVel.set(fwd.x*2 + (Math.random()-0.5)*0.5, 1.5, fwd.z*2 + (Math.random()-0.5)*0.5);
       sword.position.set(player.pos.x + fwd.x*0.6, player.pos.y - 0.4, player.pos.z + fwd.z*0.6);
@@ -844,7 +790,6 @@ function initControls(){
     }
   });
 
-  // Maker Pen : toggle
   const penToggle = document.getElementById('penToggle');
   penToggle.addEventListener('pointerdown', e => {
     e.stopPropagation();
@@ -855,7 +800,6 @@ function initControls(){
     document.getElementById('buildMenu').classList.toggle('show', makerPenOn);
   });
 
-  // Maker Pen : sélection d'objet
   document.querySelectorAll('.build-item').forEach(el => {
     el.addEventListener('pointerdown', e => {
       e.stopPropagation();
@@ -865,7 +809,6 @@ function initControls(){
     });
   });
 
-  // Caméra : glissement tactile sur la zone libre de l'écran (canvas)
   const canvas = document.getElementById('c');
   canvas.addEventListener('pointerdown', e => {
     cameraTouch = {id: e.pointerId, lastX: e.clientX, lastY: e.clientY, startX:e.clientX, startY:e.clientY, moved:0};
@@ -882,7 +825,6 @@ function initControls(){
   });
   ['pointerup','pointercancel'].forEach(evt => canvas.addEventListener(evt, e => {
     if (!cameraTouch || e.pointerId !== cameraTouch.id) return;
-    // Un tap (peu de mouvement) en mode Maker Pen = action de construction / gomme
     if (makerPenOn && cameraTouch.moved < 8){
       handleMakerPenTap();
     }
@@ -927,7 +869,6 @@ function updateLocalPlayer(dt){
     return;
   }
 
-  // --- gravité & saut ---
   player.velY += GRAVITY * dt;
   player.pos.y += player.velY * dt;
   if (player.pos.y <= PLAYER_HEIGHT){
@@ -941,23 +882,21 @@ function updateLocalPlayer(dt){
     jumpPressed = false;
   }
 
-  // --- déplacement (relatif à l'orientation caméra) ---
   const forward = getForwardVector();
-  const right = new THREE.Vector3(forward.z, 0, -forward.x); // perpendiculaire
+  const right = new THREE.Vector3(forward.z, 0, -forward.x); 
   const move = new THREE.Vector3();
-  move.addScaledVector(forward, -moveStick.y);  // joystick haut = avancer
+  move.addScaledVector(forward, -moveStick.y);  
   move.addScaledVector(right, moveStick.x);
   if (move.lengthSq() > 0.0001){
     move.normalize().multiplyScalar(MOVE_SPEED * dt);
     player.pos.x += move.x;
     player.pos.z += move.z;
   }
-  // limites de la pièce
+  
   const lim = ROOM_HALF - 0.4;
   player.pos.x = Math.max(-lim, Math.min(lim, player.pos.x));
   player.pos.z = Math.max(-lim, Math.min(lim, player.pos.z));
 
-  // --- orientation caméra ---
   const phi = THREE.MathUtils.degToRad(90 - player.lat);
   const theta = THREE.MathUtils.degToRad(player.lon);
   const lookDir = new THREE.Vector3(
@@ -968,7 +907,6 @@ function updateLocalPlayer(dt){
   camera.position.copy(player.pos);
   camera.lookAt(player.pos.x + lookDir.x, player.pos.y + lookDir.y, player.pos.z + lookDir.z);
 
-  // --- mains (suivent les joysticks, décalées devant le joueur) ---
   const fwd = getForwardVector();
   const rgt = new THREE.Vector3(fwd.z,0,-fwd.x);
   const handBaseY = player.pos.y - 0.35;
@@ -976,12 +914,10 @@ function updateLocalPlayer(dt){
   updateHand(leftHandMesh, lhStick, prevHandPos.left, fwd, rgt, handBaseY, -0.35, dt);
   updateHand(rightHandMesh, rhStick, prevHandPos.right, fwd, rgt, handBaseY, 0.35, dt);
 
-  // --- épée : ramassage / suivi ---
   updateSword(dt);
 }
 
 function updateHand(mesh, stick, prevPos, fwd, rgt, baseY, sideOffset, dt){
-  const reach = 0.5;
   const px = player.pos.x + fwd.x*0.45 + rgt.x*(sideOffset + stick.x*0.35);
   const pz = player.pos.z + fwd.z*0.45 + rgt.z*(sideOffset + stick.x*0.35);
   const py = baseY - stick.y*0.4;
@@ -992,11 +928,9 @@ function updateHand(mesh, stick, prevPos, fwd, rgt, baseY, sideOffset, dt){
 
 function updateSword(dt){
   if (swordHolder === 'me'){
-    // l'épée suit la main droite
     sword.position.copy(rightHandMesh.position);
     sword.rotation.set(Math.PI/2, 0, player.lon * (Math.PI/180));
 
-    // vitesse de la main = vitesse de l'épée -> détection de coup
     const speed = rightHandMesh.position.distanceTo(prevHandPos.right) / Math.max(dt, 1/120);
     if (speed > SWORD_HIT_SPEED){
       for (const id in remotePlayers){
@@ -1009,7 +943,6 @@ function updateSword(dt){
       }
     }
   } else if (swordHolder === null){
-    // physique au sol : gravité + cooldown anti re-ramassage
     if (dropCooldown > 0) dropCooldown -= dt;
 
     sword.position.addScaledVector(swordVel, dt);
@@ -1017,11 +950,10 @@ function updateSword(dt){
     if (sword.position.y <= 0.15){
       sword.position.y = 0.15;
       swordVel.y = 0;
-      swordVel.x *= 0.9; swordVel.z *= 0.9; // friction
+      swordVel.x *= 0.9; swordVel.z *= 0.9; 
     }
     sword.rotation.set(Math.PI/2, 0, 0);
 
-    // ramassage si le joueur local est proche et hors cooldown
     if (!isDead && dropCooldown <= 0){
       const d = Math.hypot(player.pos.x - sword.position.x, player.pos.z - sword.position.z);
       if (d < SWORD_PICK_DIST){
@@ -1031,7 +963,6 @@ function updateSword(dt){
       }
     }
   } else {
-    // tenue par un joueur distant -> suit sa main droite
     const rp = remotePlayers[swordHolder];
     if (rp){
       sword.position.copy(rp.rightHand.position);
@@ -1042,17 +973,15 @@ function updateSword(dt){
 }
 
 function updateRemotePlayers(dt){
-  const lerpFactor = 1 - Math.pow(0.001, dt); // interpolation fluide indépendante du framerate
+  const lerpFactor = 1 - Math.pow(0.001, dt); 
   for (const id in remotePlayers){
     const rp = remotePlayers[id];
     rp.group.position.lerp(rp.target.pos, lerpFactor);
     rp.group.rotation.y += (rp.target.rotY - rp.group.rotation.y) * lerpFactor;
 
-    // mains relatives au groupe
     rp.leftHand.position.lerp(new THREE.Vector3(-0.35 + rp.target.left.x*0.35, 0.05 - rp.target.left.y*0.4, 0.45), lerpFactor);
     rp.rightHand.position.lerp(new THREE.Vector3(0.35 + rp.target.right.x*0.35, 0.05 - rp.target.right.y*0.4, 0.45), lerpFactor);
 
-    // affichage "mort" : grise le joueur et le surélève
     const targetY = rp.target.dead ? 2.5 : 0;
     rp.group.position.y += ((rp.target.pos.y + targetY) - rp.group.position.y) * 0.1;
     rp.head.material.color.setHex(rp.target.dead ? 0x888888 : 0xffffff);
@@ -1060,16 +989,14 @@ function updateRemotePlayers(dt){
 }
 
 function updateBall(dt){
-  ballVel.y += GRAVITY * 0.5 * dt; // gravité atténuée pour un rebond plus "fun"
+  ballVel.y += GRAVITY * 0.5 * dt; 
   bounceBall.position.addScaledVector(ballVel, dt);
 
-  // rebond sol
   if (bounceBall.position.y - BALL_RADIUS <= 0){
     bounceBall.position.y = BALL_RADIUS;
     ballVel.y = -ballVel.y * BALL_RESTITUTION;
-    ballVel.x *= 0.985; ballVel.z *= 0.985; // friction
+    ballVel.x *= 0.985; ballVel.z *= 0.985; 
   }
-  // rebond murs
   const lim = ROOM_HALF - BALL_RADIUS;
   if (Math.abs(bounceBall.position.x) > lim){
     bounceBall.position.x = Math.sign(bounceBall.position.x) * lim;
@@ -1085,12 +1012,10 @@ function updateBall(dt){
 
 /* ----------------------------- EFFETS VISUELS DE COUP ----------------------------- */
 function spawnHitEffect(position){
-  // flash plein écran si c'est le joueur local
   const flash = document.getElementById('hitFlash');
   flash.style.opacity = '0.35';
   setTimeout(()=> flash.style.opacity = '0', 100);
 
-  // petites particules rouges qui s'écartent puis disparaissent
   for (let i=0;i<8;i++){
     const p = new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6), new THREE.MeshBasicMaterial({color:0xff3333, transparent:true}));
     p.position.copy(position);
@@ -1126,7 +1051,6 @@ function killLocalPlayer(){
     document.getElementById('dropBtn').style.display = 'none';
     broadcast({type:'sword', action:'drop', pos:[sword.position.x,sword.position.y,sword.position.z], vel:[0,0,0]});
   }
-  // passe en mode spectateur surélevé
   player.pos.y = PLAYER_HEIGHT + 3;
 }
 
@@ -1139,13 +1063,14 @@ function respawnPlayer(){
 }
 
 /* ===================================================================================
-   6. BOUCLE RESEAU (envoi d'état à fréquence fixe — optimisation)
+   6. BOUCLE RESEAU
    =================================================================================== */
 function startNetworkLoop(){
   setInterval(() => {
     if (Object.keys(connections).length === 0) return;
     broadcast({
       type:'state',
+      name: myName, // [CORRECTION] Transmet le nom pour que l'étiquette s'initialise correctement chez les autres
       pos:[player.pos.x, player.pos.y, player.pos.z],
       rotY: player.lon * (Math.PI/180),
       leftHand: {x: lhStick.x, y: lhStick.y},
@@ -1153,7 +1078,6 @@ function startNetworkLoop(){
       dead: isDead
     });
 
-    // L'hôte fait office d'autorité légère pour la balle (anti-divergence)
     if (isHost){
       broadcast({type:'ball', pos:[bounceBall.position.x,bounceBall.position.y,bounceBall.position.z], vel:[ballVel.x,ballVel.y,ballVel.z]});
     }
@@ -1165,7 +1089,7 @@ function startNetworkLoop(){
    =================================================================================== */
 function animate(){
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05); // clamp pour éviter les sauts si onglet en pause
+  const dt = Math.min(clock.getDelta(), 0.05); 
 
   updateLocalPlayer(dt);
   updateRemotePlayers(dt);
