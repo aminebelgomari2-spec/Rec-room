@@ -323,10 +323,10 @@ async function enterGame(){
 }
 
 /* ===================================================================================
-   2. RESEAU P2P (PeerJS) — correction de l'enregistrement et du broadcast
+   2. RESEAU P2P (PeerJS)
    =================================================================================== */
 function registerDataConnection(conn){
-  connections[conn.peer] = conn; // [CORRECTION] Enregistre TOUJOURS la connexion bidirectionnellement (pour l'hôte ET le client)
+  connections[conn.peer] = conn; 
   
   conn.on('open', () => {
     if (isHost){
@@ -342,7 +342,6 @@ function registerDataConnection(conn){
                  pos:[sword.position.x,sword.position.y,sword.position.z] }
       });
     } else {
-      // [CORRECTION VOICE] Seul le client initie l'appel WebRTC vers l'hôte pour éviter le conflit d'appel simultané
       setTimeout(() => callPeer(conn.peer), 500);
     }
   });
@@ -374,7 +373,6 @@ function attachRemoteAudio(peerId, stream){
   audio.srcObject = stream;
 }
 
-// [CORRECTION BROADCAST] Implémentation propre et sécurisée de la diffusion globale
 function broadcast(data) {
   for (const id in connections) {
     if (connections[id] && connections[id].open) {
@@ -405,7 +403,7 @@ function handleNetData(conn, data){
 
     case 'state': {
       if (data.id === myId) return; 
-      let rp = remotePlayers[conn.peer]; // [CORRECTION] Utilise conn.peer pour associer fidèlement les paquets reçus
+      let rp = remotePlayers[conn.peer]; 
       if (!rp) rp = createRemotePlayer(conn.peer, data.name || "Joueur");
       if (!rp) return;
       rp.target.pos.set(data.pos[0], data.pos[1], data.pos[2]);
@@ -979,8 +977,9 @@ function updateRemotePlayers(dt){
     rp.group.position.lerp(rp.target.pos, lerpFactor);
     rp.group.rotation.y += (rp.target.rotY - rp.group.rotation.y) * lerpFactor;
 
-    rp.leftHand.position.lerp(new THREE.Vector3(-0.35 + rp.target.left.x*0.35, 0.05 - rp.target.left.y*0.4, 0.45), lerpFactor);
-    rp.rightHand.position.lerp(new THREE.Vector3(0.35 + rp.target.right.x*0.35, 0.05 - rp.target.right.y*0.4, 0.45), lerpFactor);
+    // [CORRECTION MAIN] Inversion de l'affichage local gauche/droite pour correspondre à la rotation à 180° du corps
+    rp.leftHand.position.lerp(new THREE.Vector3(0.35 - rp.target.right.x*0.35, 0.05 - rp.target.right.y*0.4, 0.45), lerpFactor);
+    rp.rightHand.position.lerp(new THREE.Vector3(-0.35 - rp.target.left.x*0.35, 0.05 - rp.target.left.y*0.4, 0.45), lerpFactor);
 
     const targetY = rp.target.dead ? 2.5 : 0;
     rp.group.position.y += ((rp.target.pos.y + targetY) - rp.group.position.y) * 0.1;
@@ -1070,9 +1069,10 @@ function startNetworkLoop(){
     if (Object.keys(connections).length === 0) return;
     broadcast({
       type:'state',
-      name: myName, // [CORRECTION] Transmet le nom pour que l'étiquette s'initialise correctement chez les autres
+      name: myName, 
       pos:[player.pos.x, player.pos.y, player.pos.z],
-      rotY: player.lon * (Math.PI/180),
+      // [CORRECTION ROTATION] Inversion de l'angle à 180° pour corriger l'effet miroir face-à-face
+      rotY: (180 - player.lon) * (Math.PI / 180),
       leftHand: {x: lhStick.x, y: lhStick.y},
       rightHand:{x: rhStick.x, y: rhStick.y},
       dead: isDead
