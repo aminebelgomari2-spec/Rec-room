@@ -234,6 +234,7 @@ const DROP_COOLDOWN  = 1.5;
 let scene, camera, renderer, clock;
 let myId = null, myName = "Joueur";
 let isHost = false;
+let hostId = null;        // id du pair faisant office d'hôte/relais (= myId si on est l'hôte)
 let roomCode = "";
 let peer = null;
 const connections = {};   // peerId -> DataConnection
@@ -304,25 +305,22 @@ function startPeer(targetCode, host){
   if (host){
     peer = new Peer(targetCode);
     peer.on('open', id => {
-      myId = id; isHost = true; roomCode = id;
+      myId = id; hostId = id; isHost = true; roomCode = id;
       enterGame();
     });
     peer.on('error', err => statusEl.textContent = "Erreur : " + err.type + " (le code est peut-être déjà pris)");
   } else {
     peer = new Peer();
     peer.on('open', id => {
-      myId = id; isHost = false; roomCode = targetCode;
+      myId = id; isHost = false; roomCode = targetCode; hostId = targetCode;
       const conn = peer.connect(targetCode, {reliable:true});
       registerDataConnection(conn);
-      conn.on('open', () => {
-        conn.send({type:'hello', name: myName, id: myId});
-        enterGame();
-      });
+      enterGame();
     });
     peer.on('error', err => statusEl.textContent = "Erreur : " + err.type + " (room introuvable ?)");
   }
 
-  // Réception de connexions entrantes (l'hôte, mais aussi en full-mesh tous les clients)
+  // Connexions entrantes : pour l'hôte, ce sont tous les clients de la room.
   peer.on('connection', conn => registerDataConnection(conn));
   // Réception d'appels vocaux entrants
   peer.on('call', call => {
@@ -355,8 +353,35 @@ async function enterGame(){
    =================================================================================== */
 function registerDataConnection(conn){
   connections[conn.peer] = conn;
-  conn.on('data', data => handleNetData(conn.peer, data));
-  conn.on('close', () => removeRemotePlayer(conn.peer));
+  conn.on('open', () => {
+    if (isHost){
+      // Envoie l'état actuel de la room (constructions, balle, épée) au nouveau venu.
+      conn.send({
+        type:'sync',
+        builds: Object.entries(builtObjects).map(([bid,m]) => ({
+          id:bid, item:m.userData.itemType, color:'#'+m.userData.color.getHexString(),
+          pos:[m.position.x,m.position.y,m.position.z], rot:m.rotation.y
+        })),
+        ball: { pos:[bounceBall.position.x,bounceBall.position.y,bounceBall.position.z],
+                vel:[ballVel.x,ballVel.y,ballVel.z] },
+        sword: { holder: swordHolder === 'me' ? myId : swordHolder,
+                 pos:[sword.position.x,sword.position.y,sword.position.z] }
+      });
+      // Petit délai pour laisser le DataChannel/MediaChannel du client se stabiliser.
+      setTimeout(() => callPeer(conn.peer), 600);
+    } else {
+      // Le client appelle l'hôte pour établir le chat vocal.
+      callPeer(conn.peer);
+    }
+  });
+  conn.on('data', data => handleNetData(conn, data));
+  conn.on('close', () => {
+    removeRemotePlayer(conn.peer);
+    if (isHost){
+      // Informe les autres clients que ce joueur est parti.
+      sendToNetwork({type:'leave', id: conn.peer});
+    }
+  });
 }
 
 function callPeer(peerId){
@@ -377,65 +402,38 @@ function attachRemoteAudio(peerId, stream){
   audio.srcObject = stream;
 }
 
-// Diffuse un message à tous les pairs connectés
-function broadcast(data){
-  for (const id in connections){
-    if (connections[id].open) connections[id].send(data);
+// Envoie un message dans le réseau :
+// - si on est l'hôte, on l'envoie directement à tous les clients connectés
+// - si on est un client, on l'envoie à l'hôte, qui le relaiera aux autres
+function sendToNetwork(data){
+  if (isHost){
+    for (const id in connections){
+      if (connections[id].open) connections[id].send(data);
+    }
+  } else {
+    const hostConn = connections[hostId];
+    if (hostConn && hostConn.open) hostConn.send(data);
   }
 }
 
-function handleNetData(fromId, data){
+function handleNetData(conn, data){
+  // RELAIS : l'hôte retransmet tout message reçu à tous les autres clients
+  // (sauf à celui qui l'a envoyé). C'est ce qui garantit que TOUT LE MONDE
+  // reçoit les infos de TOUT LE MONDE, même les joueurs arrivés avant soi.
+  if (isHost){
+    for (const id in connections){
+      if (id !== conn.peer && connections[id].open) connections[id].send(data);
+    }
+  }
+
   switch(data.type){
 
-    case 'hello': {
-      // L'hôte reçoit la présentation d'un nouveau joueur -> lui envoie l'état de la room
-      createRemotePlayer(fromId, data.name);
-      callPeer(fromId);
-      if (isHost){
-        const peerList = Object.keys(connections).filter(id => id !== fromId).map(id => ({
-          id, name: remotePlayers[id] ? remotePlayers[id].name : '???'
-        }));
-        // IMPORTANT : l'hôte n'a pas de connexion "à lui-même" dans `connections`,
-        // donc sans cette ligne le nouveau venu ne sait jamais que l'hôte existe.
-        peerList.push({id: myId, name: myName});
-        connections[fromId].send({
-          type:'welcome',
-          peers: peerList,
-          builds: Object.entries(builtObjects).map(([bid,m]) => ({
-            id:bid, item:m.userData.itemType, color:'#'+m.userData.color.getHexString(),
-            pos:[m.position.x,m.position.y,m.position.z], rot:m.rotation.y
-          })),
-          ball: { pos:[bounceBall.position.x,bounceBall.position.y,bounceBall.position.z],
-                  vel:[ballVel.x,ballVel.y,ballVel.z] },
-          sword: { holder: swordHolder, pos:[sword.position.x,sword.position.y,sword.position.z] }
-        });
-        // informe tout le monde qu'un nouveau joueur est là
-        broadcast({type:'player-joined', id: fromId, name: data.name});
-      }
-      break;
-    }
-
-    case 'welcome': {
-      // Reçu par un nouveau client : se connecte en mesh à tous les pairs déjà présents
-      data.peers.forEach(p => {
-        if (p.id === myId) return;
-        createRemotePlayer(p.id, p.name);
-        if (connections[p.id]){
-          // Connexion déjà existante (typiquement : l'hôte, auquel on est déjà relié) ->
-          // pas besoin d'ouvrir une 2e connexion data, on lance juste l'appel vocal.
-          callPeer(p.id);
-          return;
-        }
-        const c = peer.connect(p.id, {reliable:true});
-        registerDataConnection(c);
-        c.on('open', () => { c.send({type:'hello', name: myName, id: myId}); callPeer(p.id); });
-      });
-      // Synchronise les constructions existantes
+    case 'sync': {
+      // Reçu uniquement par un nouveau client, directement depuis l'hôte :
+      // synchronise l'état actuel de la room (constructions, balle, épée).
       data.builds.forEach(b => spawnBuildItem(b.item, new THREE.Vector3(...b.pos), b.rot, b.color, b.id, false));
-      // Synchronise la balle
       bounceBall.position.set(...data.ball.pos);
       ballVel.set(...data.ball.vel);
-      // Synchronise l'épée
       if (data.sword.holder){
         swordHolder = data.sword.holder;
       } else {
@@ -444,12 +442,12 @@ function handleNetData(fromId, data){
       break;
     }
 
-    case 'player-joined':
-      createRemotePlayer(data.id, data.name);
-      break;
-
     case 'state': {
-      const rp = remotePlayers[fromId];
+      if (data.id === myId) return; // sécurité anti-écho
+      // Création paresseuse : si on ne connaît pas encore ce joueur (ex: il était
+      // déjà dans la room avant nous), on crée son avatar dès son premier paquet.
+      let rp = remotePlayers[data.id];
+      if (!rp) rp = createRemotePlayer(data.id, data.name);
       if (!rp) return;
       rp.target.pos.set(data.pos[0], data.pos[1], data.pos[2]);
       rp.target.rotY = data.rotY;
@@ -460,7 +458,8 @@ function handleNetData(fromId, data){
     }
 
     case 'sword': {
-      if (data.action === 'pickup') swordHolder = fromId;
+      if (data.id === myId) return;
+      if (data.action === 'pickup') swordHolder = data.id;
       if (data.action === 'drop'){
         swordHolder = null;
         sword.position.set(data.pos[0], data.pos[1], data.pos[2]);
@@ -489,6 +488,10 @@ function handleNetData(fromId, data){
         bounceBall.position.lerp(new THREE.Vector3(...data.pos), 0.4);
         ballVel.set(...data.vel);
       }
+      break;
+
+    case 'leave':
+      removeRemotePlayer(data.id);
       break;
   }
 }
