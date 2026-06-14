@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Dorm Room 3D</title>
+
+<!-- PeerJS pour le réseau P2P (data + voix WebRTC) -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+<!-- Three.js via importmap -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<style>
+  :root{
+    --orange:#ff8c2b;
+    --blue:#3da9fc;
+    --green:#39d98a;
+    --red:#ff4d4d;
+    --grey:#7a7a7a;
+  }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    overflow:hidden; background:#111;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select:none; user-select:none;
+    touch-action:none;
+  }
+  #c{ position:fixed; top:0; left:0; width:100%; height:100%; display:block; }
+
+  /* ===================== ECRAN DE CONNEXION ===================== */
+  #login{
+    position:fixed; inset:0; z-index:50;
+    background:linear-gradient(135deg,#1b1f2a,#2d3548);
+    display:flex; align-items:center; justify-content:center;
+    color:#fff;
+  }
+  #login .card{
+    background:rgba(255,255,255,0.06);
+    border:1px solid rgba(255,255,255,0.12);
+    border-radius:16px; padding:24px; width:88%; max-width:360px;
+    box-shadow:0 10px 30px rgba(0,0,0,0.4);
+  }
+  #login h1{ margin:0 0 4px; font-size:24px; }
+  #login p{ margin:0 0 18px; opacity:0.7; font-size:13px; }
+  #login input{
+    width:100%; box-sizing:border-box; padding:12px; margin-bottom:10px;
+    border-radius:10px; border:1px solid rgba(255,255,255,0.2);
+    background:rgba(0,0,0,0.25); color:#fff; font-size:15px;
+  }
+  #login button{
+    width:100%; padding:13px; margin-top:4px; border:none; border-radius:10px;
+    font-weight:700; font-size:15px; cursor:pointer; color:#fff;
+  }
+  #btnHost{ background:var(--orange); }
+  #btnJoin{ background:var(--blue); }
+  #login .sep{ text-align:center; opacity:0.5; font-size:12px; margin:14px 0; }
+  #loginStatus{ margin-top:10px; font-size:12px; text-align:center; min-height:16px; opacity:0.85; }
+
+  /* ===================== HUD ===================== */
+  #hud{ position:fixed; inset:0; pointer-events:none; z-index:10; display:none; }
+  #roomBadge{
+    position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,0.45); color:#fff; padding:6px 14px;
+    border-radius:20px; font-size:13px; letter-spacing:1px; font-weight:600;
+  }
+  #voiceBadge{
+    position:absolute; top:10px; right:10px;
+    background:rgba(0,0,0,0.45); color:#39d98a; padding:6px 10px;
+    border-radius:20px; font-size:12px;
+  }
+  #hitFlash{
+    position:absolute; inset:0; background:#ff0000; opacity:0; pointer-events:none;
+    transition:opacity 0.08s;
+  }
+  #deadOverlay{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:28px; font-weight:800; letter-spacing:2px;
+    background:rgba(0,0,0,0.35); opacity:0; transition:opacity 0.3s; pointer-events:none;
+  }
+
+  /* ===================== CROSSHAIR (Maker Pen) ===================== */
+  #crosshair{
+    position:absolute; top:50%; left:50%; width:14px; height:14px;
+    margin:-7px 0 0 -7px; border:2px solid #fff; border-radius:50%;
+    box-shadow:0 0 6px rgba(0,0,0,0.6); display:none;
+  }
+
+  /* ===================== JOYSTICKS ===================== */
+  .stick-zone{
+    position:absolute; width:130px; height:130px; border-radius:50%;
+    background:rgba(255,255,255,0.06); border:2px solid rgba(255,255,255,0.18);
+    pointer-events:auto; touch-action:none;
+  }
+  .stick-knob{
+    position:absolute; width:54px; height:54px; border-radius:50%;
+    top:50%; left:50%; margin:-27px 0 0 -27px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4);
+    transition:background 0.1s;
+  }
+  #moveZone{ left:18px; bottom:18px; }
+  #moveZone .stick-knob{ background:var(--orange); }
+  #leftHandZone{ left:18px; top:18px; width:100px; height:100px; }
+  #leftHandZone .stick-knob{ width:44px; height:44px; margin:-22px 0 0 -22px; background:var(--blue); }
+  #rightHandZone{ right:18px; top:18px; width:100px; height:100px; }
+  #rightHandZone .stick-knob{ width:44px; height:44px; margin:-22px 0 0 -22px; background:var(--green); }
+
+  /* ===================== BOUTONS ===================== */
+  .action-btn{
+    position:absolute; pointer-events:auto; touch-action:none;
+    border:none; border-radius:50%; font-weight:800; color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 3px 8px rgba(0,0,0,0.4); font-size:12px; text-align:center;
+    line-height:1.1;
+  }
+  #jumpBtn{
+    right:26px; bottom:26px; width:74px; height:74px; background:var(--orange);
+    font-size:14px;
+  }
+  #dropBtn{
+    right:30px; bottom:112px; width:60px; height:60px; background:var(--red);
+    display:none;
+  }
+  #penToggle{
+    top:14px; left:14px; width:auto; height:auto; border-radius:10px;
+    padding:8px 14px; background:rgba(0,0,0,0.45); font-size:12px;
+  }
+  #penToggle.on{ background:var(--blue); }
+
+  /* ===================== MENU MAKER PEN ===================== */
+  #buildMenu{
+    position:absolute; left:50%; bottom:160px; transform:translateX(-50%);
+    display:none; gap:10px; pointer-events:auto; touch-action:none;
+  }
+  #buildMenu.show{ display:flex; }
+  .build-item{
+    width:58px; height:58px; border-radius:12px; background:rgba(0,0,0,0.5);
+    border:2px solid rgba(255,255,255,0.25); color:#fff; font-size:10px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:4px; cursor:pointer;
+  }
+  .build-item.selected{ border-color:var(--green); background:rgba(57,217,138,0.25); }
+  .build-item .swatch{ width:18px; height:18px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+<!-- ===================== ECRAN DE CONNEXION ===================== -->
+<div id="login">
+  <div class="card">
+    <h1>🛏️ Dorm Room 3D</h1>
+    <p>Mini "Rec Room" mobile — multijoueur P2P, voix, combat à l'épée &amp; Maker Pen.</p>
+    <input id="nameInput" maxlength="14" placeholder="Ton pseudo">
+    <button id="btnHost">Créer une Room</button>
+    <div class="sep">— ou —</div>
+    <input id="codeInput" maxlength="8" placeholder="Code de la Room (REC-XXXX)">
+    <button id="btnJoin">Rejoindre</button>
+    <div id="loginStatus"></div>
+  </div>
+</div>
+
+<!-- ===================== CANVAS 3D ===================== -->
+<canvas id="c"></canvas>
+
+<!-- ===================== HUD / CONTROLES ===================== -->
+<div id="hud">
+  <div id="hitFlash"></div>
+  <div id="deadOverlay">💀 ÉLIMINÉ — réapparition...</div>
+  <div id="roomBadge"></div>
+  <div id="voiceBadge">🎙️ Voix active</div>
+  <div id="crosshair"></div>
+
+  <!-- Joysticks -->
+  <div class="stick-zone" id="moveZone"><div class="stick-knob"></div></div>
+  <div class="stick-zone" id="leftHandZone"><div class="stick-knob"></div></div>
+  <div class="stick-zone" id="rightHandZone"><div class="stick-knob"></div></div>
+
+  <!-- Boutons -->
+  <button class="action-btn" id="jumpBtn">SAUT</button>
+  <button class="action-btn" id="dropBtn">LÂCHER</button>
+  <button class="action-btn" id="penToggle">🖊️ MAKER PEN: OFF</button>
+
+  <!-- Menu de construction -->
+  <div id="buildMenu">
+    <div class="build-item selected" data-item="cube"><div class="swatch" style="background:#e07b39"></div>CUBE</div>
+    <div class="build-item" data-item="chair"><div class="swatch" style="background:#8a5a44"></div>CHAISE</div>
+    <div class="build-item" data-item="sofa"><div class="swatch" style="background:#5577cc"></div>CANAPÉ</div>
+    <div class="build-item" data-item="eraser"><div class="swatch" style="background:#ffffff"></div>GOMME</div>
+  </div>
+</div>
+
+<!-- Conteneur invisible pour les flux audio distants -->
+<div id="audioContainer" style="display:none"></div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* =====================================================================================
+   DORM ROOM 3D — version améliorée
+   -------------------------------------------------------------------------------------
+   Améliorations principales par rapport à la base :
+   - Réseau optimisé : envoi d'état à fréquence fixe (12 Hz) + interpolation (lerp) des
+     joueurs distants pour un mouvement fluide même avec peu de paquets.
+   - Topologie P2P "full-mesh" : l'hôte transmet la liste des participants pour que
+     chaque client se connecte directement aux autres (data + appel vocal WebRTC).
+   - Nouvel objet "Balle Rebondissante" avec physique simple (gravité + restitution sur
+     sol et murs), synchronisée par l'hôte (autorité réseau légère).
+   - Outil "GOMME" dans le Maker Pen pour supprimer les objets construits.
+   - Effets visuels de coup : flash plein écran rouge + particules à l'impact.
+   - Anti-rebond de l'épée conservé (cooldown 1.5s + impulsion vers l'avant).
+   ===================================================================================== */
+
+/* ----------------------------- CONSTANTES GLOBALES ----------------------------- */
+const ROOM_HALF      = 6;          // pièce de 12x12
+const WALL_HEIGHT    = 6;
+const PLAYER_HEIGHT  = 1.7;        // hauteur des yeux = "sol" pour le joueur
+const GRAVITY        = -16;
+const JUMP_FORCE     = 6.2;
+const MOVE_SPEED     = 3.4;
+const LOOK_SENS      = 0.0028;
+const NET_SEND_HZ    = 12;         // fréquence d'envoi des paquets d'état (optimisation)
+const SWORD_PICK_DIST= 0.8;
+const SWORD_HIT_DIST = 1.2;
+const SWORD_HIT_SPEED= 2.0;
+const DROP_COOLDOWN  = 1.5;
+
+/* ----------------------------- ETAT GLOBAL ----------------------------- */
+let scene, camera, renderer, clock;
+let myId = null, myName = "Joueur";
+let isHost = false;
+let roomCode = "";
+let peer = null;
+const connections = {};   // peerId -> DataConnection
+const calls = {};         // peerId -> MediaConnection
+let localStream = null;
+
+const remotePlayers = {};     // peerId -> { group, head, torso, leftHand, rightHand, nametag, target:{...} }
+const buildableTargets = [];  // meshes ciblables par le raycaster (sol/murs/objets construits)
+const builtObjects = {};      // buildId -> mesh
+let buildIdCounter = 0;
+
+/* --- joueur local --- */
+const player = {
+  pos: new THREE.Vector3(0, PLAYER_HEIGHT, 3),
+  velY: 0,
+  grounded: true,
+  lon: 0, lat: 0,        // orientation caméra (coordonnées sphériques)
+};
+
+/* --- mains locales (suivent les joysticks) --- */
+let leftHandMesh, rightHandMesh;
+const handOffset = { left: {x:0,y:0}, right: {x:0,y:0} }; // -1..1 -> décalage local
+const prevHandPos = { left: new THREE.Vector3(), right: new THREE.Vector3() };
+
+/* --- épée --- */
+let sword, swordHolder = null;     // swordHolder = peerId du porteur ('me' = local), null = au sol
+let swordVel = new THREE.Vector3();
+let dropCooldown = 0;
+
+/* --- vie / mort --- */
+let isDead = false;
+let respawnTimer = 0;
+
+/* --- balle rebondissante --- */
+let bounceBall, ballVel = new THREE.Vector3(1.5, 0, 1.0);
+const BALL_RADIUS = 0.4, BALL_RESTITUTION = 0.72;
+
+/* --- effets visuels (particules de coup) --- */
+const hitEffects = []; // {mesh, life}
+
+/* --- Maker Pen --- */
+let makerPenOn = false;
+let selectedBuildItem = 'cube';
+const raycaster = new THREE.Raycaster();
+
+/* ===================================================================================
+   1. ECRAN DE CONNEXION
+   =================================================================================== */
+const loginEl   = document.getElementById('login');
+const hudEl     = document.getElementById('hud');
+const statusEl  = document.getElementById('loginStatus');
+
+document.getElementById('btnHost').addEventListener('click', () => {
+  myName = (document.getElementById('nameInput').value || 'Joueur').trim().slice(0,14);
+  const code = 'REC-' + Math.floor(1000 + Math.random() * 9000);
+  startPeer(code, true);
+});
+
+document.getElementById('btnJoin').addEventListener('click', () => {
+  myName = (document.getElementById('nameInput').value || 'Joueur').trim().slice(0,14);
+  const code = (document.getElementById('codeInput').value || '').trim().toUpperCase();
+  if (!code) { statusEl.textContent = "Entre un code de room valide."; return; }
+  startPeer(code, false);
+});
+
+function startPeer(targetCode, host){
+  statusEl.textContent = "Connexion en cours...";
+  if (host){
+    peer = new Peer(targetCode);
+    peer.on('open', id => {
+      myId = id; isHost = true; roomCode = id;
+      enterGame();
+    });
+    peer.on('error', err => statusEl.textContent = "Erreur : " + err.type + " (le code est peut-être déjà pris)");
+  } else {
+    peer = new Peer();
+    peer.on('open', id => {
+      myId = id; isHost = false; roomCode = targetCode;
+      const conn = peer.connect(targetCode, {reliable:true});
+      registerDataConnection(conn);
+      conn.on('open', () => {
+        conn.send({type:'hello', name: myName, id: myId});
+        enterGame();
+      });
+    });
+    peer.on('error', err => statusEl.textContent = "Erreur : " + err.type + " (room introuvable ?)");
+  }
+
+  // Réception de connexions entrantes (l'hôte, mais aussi en full-mesh tous les clients)
+  peer.on('connection', conn => registerDataConnection(conn));
+  // Réception d'appels vocaux entrants
+  peer.on('call', call => {
+    call.answer(localStream || undefined);
+    call.on('stream', stream => attachRemoteAudio(call.peer, stream));
+    calls[call.peer] = call;
+  });
+}
+
+async function enterGame(){
+  // Demande micro pour le chat vocal
+  try{
+    localStream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
+  }catch(e){
+    console.warn("Micro indisponible :", e);
+  }
+
+  loginEl.style.display = 'none';
+  hudEl.style.display = 'block';
+  document.getElementById('roomBadge').textContent = roomCode;
+
+  initScene();
+  initControls();
+  startNetworkLoop();
+  animate();
+}
+
+/* ===================================================================================
+   2. RESEAU P2P (PeerJS) — full-mesh data + voix
+   =================================================================================== */
+function registerDataConnection(conn){
+  connections[conn.peer] = conn;
+  conn.on('data', data => handleNetData(conn.peer, data));
+  conn.on('close', () => removeRemotePlayer(conn.peer));
+}
+
+function callPeer(peerId){
+  if (calls[peerId] || !localStream) return;
+  const call = peer.call(peerId, localStream);
+  call.on('stream', stream => attachRemoteAudio(peerId, stream));
+  calls[peerId] = call;
+}
+
+function attachRemoteAudio(peerId, stream){
+  let audio = document.getElementById('audio-' + peerId);
+  if (!audio){
+    audio = document.createElement('audio');
+    audio.id = 'audio-' + peerId;
+    audio.autoplay = true;
+    document.getElementById('audioContainer').appendChild(audio);
+  }
+  audio.srcObject = stream;
+}
+
+// Diffuse un message à tous les pairs connectés
+function broadcast(data){
+  for (const id in connections){
+    if (connections[id].open) connections[id].send(data);
+  }
+}
+
+function handleNetData(fromId, data){
+  switch(data.type){
+
+    case 'hello': {
+      // L'hôte reçoit la présentation d'un nouveau joueur -> lui envoie l'état de la room
+      createRemotePlayer(fromId, data.name);
+      callPeer(fromId);
+      if (isHost){
+        const peerList = Object.keys(connections).filter(id => id !== fromId).map(id => ({
+          id, name: remotePlayers[id] ? remotePlayers[id].name : '???'
+        }));
+        connections[fromId].send({
+          type:'welcome',
+          peers: peerList,
+          builds: Object.entries(builtObjects).map(([bid,m]) => ({
+            id:bid, item:m.userData.itemType, color:'#'+m.userData.color.getHexString(),
+            pos:[m.position.x,m.position.y,m.position.z], rot:m.rotation.y
+          })),
+          ball: { pos:[bounceBall.position.x,bounceBall.position.y,bounceBall.position.z],
+                  vel:[ballVel.x,ballVel.y,ballVel.z] },
+          sword: { holder: swordHolder, pos:[sword.position.x,sword.position.y,sword.position.z] }
+        });
+        // informe tout le monde qu'un nouveau joueur est là
+        broadcast({type:'player-joined', id: fromId, name: data.name});
+      }
+      break;
+    }
+
+    case 'welcome': {
+      // Reçu par un nouveau client : se connecte en mesh à tous les pairs déjà présents
+      data.peers.forEach(p => {
+        if (p.id === myId) return;
+        createRemotePlayer(p.id, p.name);
+        const c = peer.connect(p.id, {reliable:true});
+        registerDataConnection(c);
+        c.on('open', () => { c.send({type:'hello', name: myName, id: myId}); callPeer(p.id); });
+      });
+      // Synchronise les constructions existantes
+      data.builds.forEach(b => spawnBuildItem(b.item, new THREE.Vector3(...b.pos), b.rot, b.color, b.id, false));
+      // Synchronise la balle
+      bounceBall.position.set(...data.ball.pos);
+      ballVel.set(...data.ball.vel);
+      // Synchronise l'épée
+      if (data.sword.holder){
+        swordHolder = data.sword.holder;
+      } else {
+        sword.position.set(...data.sword.pos);
+      }
+      break;
+    }
+
+    case 'player-joined':
+      createRemotePlayer(data.id, data.name);
+      break;
+
+    case 'state': {
+      const rp = remotePlayers[fromId];
+      if (!rp) return;
+      rp.target.pos.set(data.pos[0], data.pos[1], data.pos[2]);
+      rp.target.rotY = data.rotY;
+      rp.target.left  = data.leftHand;
+      rp.target.right = data.rightHand;
+      rp.target.dead  = data.dead;
+      break;
+    }
+
+    case 'sword': {
+      if (data.action === 'pickup') swordHolder = fromId;
+      if (data.action === 'drop'){
+        swordHolder = null;
+        sword.position.set(data.pos[0], data.pos[1], data.pos[2]);
+        swordVel.set(data.vel[0], data.vel[1], data.vel[2]);
+        dropCooldown = DROP_COOLDOWN;
+      }
+      break;
+    }
+
+    case 'hit': {
+      if (data.targetId === myId) killLocalPlayer();
+      spawnHitEffect(new THREE.Vector3(...data.pos));
+      break;
+    }
+
+    case 'build':
+      spawnBuildItem(data.item, new THREE.Vector3(...data.pos), data.rot, data.color, data.id, false);
+      break;
+
+    case 'erase':
+      removeBuildItem(data.id, false);
+      break;
+
+    case 'ball': // correction périodique envoyée par l'hôte (autorité réseau)
+      if (!isHost){
+        bounceBall.position.lerp(new THREE.Vector3(...data.pos), 0.4);
+        ballVel.set(...data.vel);
+      }
+      break;
+  }
+}
+
+function removeRemotePlayer(id){
+  const rp = remotePlayers[id];
+  if (rp){ scene.remove(rp.group); delete remotePlayers[id]; }
+  delete connections[id];
+  if (calls[id]){ calls[id].close(); delete calls[id]; }
+  if (swordHolder === id) swordHolder = null;
+}
+
+/* ===================================================================================
+   3. SCENE THREE.JS — environnement de la chambre
+   =================================================================================== */
+function initScene(){
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x202535);
+  scene.fog = new THREE.Fog(0x202535, 14, 24);
+
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.05, 100);
+  camera.position.copy(player.pos);
+
+  renderer = new THREE.WebGLRenderer({canvas: document.getElementById('c'), antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75)); // optimisation mobile
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = false; // désactivé pour la perf mobile
+
+  // Lumières
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(4, 8, 3);
+  scene.add(dirLight);
+
+  buildRoom();
+  sword = buildSword();
+  sword.position.set(1.5, 0.15, -1.5);
+  scene.add(sword);
+
+  bounceBall = buildBall();
+  bounceBall.position.set(-2, 1, 1);
+  scene.add(bounceBall);
+
+  leftHandMesh  = new THREE.Mesh(new THREE.SphereGeometry(0.14,12,12), new THREE.MeshStandardMaterial({color:0xffd1a8}));
+  rightHandMesh = new THREE.Mesh(new THREE.SphereGeometry(0.14,12,12), new THREE.MeshStandardMaterial({color:0xffd1a8}));
+  scene.add(leftHandMesh, rightHandMesh);
+
+  clock = new THREE.Clock();
+  window.addEventListener('resize', onResize);
+}
+
+function onResize(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function buildRoom(){
+  const floorMat = new THREE.MeshStandardMaterial({color:0x9c6b46});
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF*2, ROOM_HALF*2), floorMat);
+  floor.rotation.x = -Math.PI/2;
+  scene.add(floor);
+  buildableTargets.push(floor);
+
+  // tapis vert central
+  const carpet = new THREE.Mesh(new THREE.PlaneGeometry(6,6), new THREE.MeshStandardMaterial({color:0x2e8b57}));
+  carpet.rotation.x = -Math.PI/2;
+  carpet.position.y = 0.01;
+  scene.add(carpet);
+
+  // plafond
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF*2, ROOM_HALF*2), new THREE.MeshStandardMaterial({color:0xeeeeee}));
+  ceil.rotation.x = Math.PI/2;
+  ceil.position.y = WALL_HEIGHT;
+  scene.add(ceil);
+
+  // murs : Nord = bleu, Est = orange (avec miroir), Sud = blanc (avec porte), Ouest = blanc
+  const wallGeo = new THREE.PlaneGeometry(ROOM_HALF*2, WALL_HEIGHT);
+  const matBlue   = new THREE.MeshStandardMaterial({color:0x3d6ea5});
+  const matOrange = new THREE.MeshStandardMaterial({color:0xd9803a});
+  const matWhite  = new THREE.MeshStandardMaterial({color:0xf2f2f2});
+
+  const north = new THREE.Mesh(wallGeo, matBlue);
+  north.position.set(0, WALL_HEIGHT/2, -ROOM_HALF);
+  scene.add(north); buildableTargets.push(north);
+
+  const east = new THREE.Mesh(wallGeo, matOrange);
+  east.position.set(ROOM_HALF, WALL_HEIGHT/2, 0);
+  east.rotation.y = -Math.PI/2;
+  scene.add(east); buildableTargets.push(east);
+
+  const south = new THREE.Mesh(wallGeo, matWhite.clone());
+  south.position.set(0, WALL_HEIGHT/2, ROOM_HALF);
+  south.rotation.y = Math.PI;
+  scene.add(south); buildableTargets.push(south);
+
+  const west = new THREE.Mesh(wallGeo, matWhite.clone());
+  west.position.set(-ROOM_HALF, WALL_HEIGHT/2, 0);
+  west.rotation.y = Math.PI/2;
+  scene.add(west); buildableTargets.push(west);
+
+  // miroir décoratif sur le mur Est
+  const mirror = new THREE.Mesh(new THREE.PlaneGeometry(2,3),
+    new THREE.MeshStandardMaterial({color:0xcfe8ff, metalness:0.6, roughness:0.15, emissive:0x99c2ff, emissiveIntensity:0.15}));
+  mirror.position.set(ROOM_HALF-0.05, 2.4, -1);
+  mirror.rotation.y = -Math.PI/2;
+  scene.add(mirror);
+
+  // cadre du miroir
+  const frame = new THREE.Mesh(new THREE.PlaneGeometry(2.2,3.2), new THREE.MeshStandardMaterial({color:0x5a4632}));
+  frame.position.set(ROOM_HALF-0.06, 2.4, -1);
+  frame.rotation.y = -Math.PI/2;
+  scene.add(frame);
+
+  // porte décorative sur le mur Sud
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(1.4,2.6), new THREE.MeshStandardMaterial({color:0x4a3a2a}));
+  door.position.set(-3.5, 1.3, ROOM_HALF-0.04);
+  door.rotation.y = Math.PI;
+  scene.add(door);
+  const doorFrame = new THREE.Mesh(new THREE.PlaneGeometry(1.6,2.8), new THREE.MeshStandardMaterial({color:0xddd3c4}));
+  doorFrame.position.set(-3.5, 1.3, ROOM_HALF-0.05);
+  doorFrame.rotation.y = Math.PI;
+  scene.add(doorFrame);
+
+  // lit (sommier + matelas + oreiller)
+  const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.5,3.2), new THREE.MeshStandardMaterial({color:0x6b4a30}));
+  bedFrame.position.set(-4, 0.25, -3.8);
+  scene.add(bedFrame); buildableTargets.push(bedFrame);
+
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(2,0.35,3), new THREE.MeshStandardMaterial({color:0xf5f0e6}));
+  mattress.position.set(-4, 0.68, -3.8);
+  scene.add(mattress); buildableTargets.push(mattress);
+
+  const pillow = new THREE.Mesh(new THREE.BoxGeometry(1.1,0.25,0.7), new THREE.MeshStandardMaterial({color:0xffffff}));
+  pillow.position.set(-4, 0.95, -5);
+  scene.add(pillow); buildableTargets.push(pillow);
+}
+
+/* ----------------------------- OBJETS DYNAMIQUES ----------------------------- */
+function buildSword(){
+  const group = new THREE.Group();
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.35,8), new THREE.MeshStandardMaterial({color:0x4a3322}));
+  handle.position.y = -0.2;
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.3,0.05,0.05), new THREE.MeshStandardMaterial({color:0xd4af37}));
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.9,0.02), new THREE.MeshStandardMaterial({color:0xcfd6dc, metalness:0.7, roughness:0.25}));
+  blade.position.y = 0.45;
+  group.add(handle, guard, blade);
+  group.rotation.z = Math.PI/2; // posée à plat au sol
+  return group;
+}
+
+function buildBall(){
+  return new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 20, 20), new THREE.MeshStandardMaterial({color:0xe6453c}));
+}
+
+// Crée un objet construit (cube / chaise / canapé)
+function spawnBuildItem(itemType, pos, rotY, colorHex, buildId, isMine){
+  let mesh;
+  const color = new THREE.Color(colorHex);
+
+  if (itemType === 'cube'){
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8), new THREE.MeshStandardMaterial({color}));
+    mesh.position.copy(pos); mesh.position.y += 0.4;
+  } else if (itemType === 'chair'){
+    mesh = new THREE.Group();
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.08,0.6), new THREE.MeshStandardMaterial({color}));
+    seat.position.y = 0.45;
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.6,0.08), new THREE.MeshStandardMaterial({color}));
+    back.position.set(0,0.75,-0.26);
+    const legMat = new THREE.MeshStandardMaterial({color: color.clone().multiplyScalar(0.7)});
+    [[0.25,0.25],[-0.25,0.25],[0.25,-0.25],[-0.25,-0.25]].forEach(([x,z])=>{
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.45,0.06), legMat);
+      leg.position.set(x,0.225,z);
+      mesh.add(leg);
+    });
+    mesh.add(seat, back);
+    mesh.position.copy(pos);
+  } else if (itemType === 'sofa'){
+    mesh = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.8,0.5,0.8), new THREE.MeshStandardMaterial({color}));
+    base.position.y = 0.25;
+    const back = new THREE.Mesh(new THREE.BoxGeometry(1.8,0.6,0.2), new THREE.MeshStandardMaterial({color}));
+    back.position.set(0,0.6,-0.3);
+    const armMat = new THREE.MeshStandardMaterial({color: color.clone().multiplyScalar(0.85)});
+    const armL = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.5,0.8), armMat); armL.position.set(-0.8,0.45,0);
+    const armR = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.5,0.8), armMat); armR.position.set(0.8,0.45,0);
+    mesh.add(base, back, armL, armR);
+    mesh.position.copy(pos);
+  } else {
+    return; // type inconnu
+  }
+
+  mesh.rotation.y = rotY;
+  mesh.userData.itemType = itemType;
+  mesh.userData.color = color;
+  mesh.userData.buildId = buildId;
+  scene.add(mesh);
+  builtObjects[buildId] = mesh;
+  buildableTargets.push(mesh);
+
+  if (isMine){
+    broadcast({type:'build', id: buildId, item: itemType, color: '#'+color.getHexString(),
+               pos:[mesh.position.x,mesh.position.y,mesh.position.z], rot: rotY});
+  }
+}
+
+function removeBuildItem(buildId, isMine){
+  const mesh = builtObjects[buildId];
+  if (!mesh) return;
+  scene.remove(mesh);
+  const idx = buildableTargets.indexOf(mesh);
+  if (idx >= 0) buildableTargets.splice(idx,1);
+  delete builtObjects[buildId];
+  if (isMine) broadcast({type:'erase', id: buildId});
+}
+
+/* ----------------------------- JOUEURS DISTANTS ----------------------------- */
+function makeNameTag(name){
+  const cnv = document.createElement('canvas');
+  cnv.width = 256; cnv.height = 64;
+  const ctx = cnv.getContext('2d');
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.roundRect ? ctx.roundRect(0,8,256,48,12) : ctx.rect(0,8,256,48);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(name, 128, 34);
+  const tex = new THREE.CanvasTexture(cnv);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false}));
+  sprite.scale.set(1.4, 0.35, 1);
+  sprite.position.y = 1.05;
+  return sprite;
+}
+
+function createRemotePlayer(id, name){
+  if (remotePlayers[id] || id === myId) return;
+
+  const group = new THREE.Group();
+
+  // tête ovale texturée (visage simple dessiné sur canvas)
+  const faceCnv = document.createElement('canvas');
+  faceCnv.width = 128; faceCnv.height = 128;
+  const fctx = faceCnv.getContext('2d');
+  fctx.fillStyle = '#ffd1a8'; fctx.fillRect(0,0,128,128);
+  fctx.fillStyle = '#333';
+  fctx.fillRect(35,45,15,15); fctx.fillRect(78,45,15,15); // yeux
+  fctx.fillRect(50,80,28,8); // bouche
+  const faceTex = new THREE.CanvasTexture(faceCnv);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.28,16,16), new THREE.MeshStandardMaterial({map:faceTex}));
+  head.scale.set(1,1.2,1);
+  head.position.y = 0.55;
+  group.add(head);
+
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.32,0.7,12),
+    new THREE.MeshStandardMaterial({color: new THREE.Color().setHSL(Math.random(),0.55,0.5)}));
+  torso.position.y = -0.05;
+  group.add(torso);
+
+  const matHand = new THREE.MeshStandardMaterial({color:0xffd1a8});
+  const lh = new THREE.Mesh(new THREE.SphereGeometry(0.13,12,12), matHand);
+  const rh = new THREE.Mesh(new THREE.SphereGeometry(0.13,12,12), matHand);
+  group.add(lh, rh);
+
+  const tag = makeNameTag(name);
+  group.add(tag);
+
+  scene.add(group);
+  remotePlayers[id] = {
+    group, head, torso, leftHand: lh, rightHand: rh, name,
+    target: { pos: new THREE.Vector3(0,PLAYER_HEIGHT,0), rotY:0, left:{x:0,y:0}, right:{x:0,y:0}, dead:false }
+  };
+}
+
+/* ===================================================================================
+   4. CONTROLES TACTILES (joysticks + caméra + boutons)
+   =================================================================================== */
+const moveStick  = {x:0, y:0};
+const lhStick    = {x:0, y:0};
+const rhStick    = {x:0, y:0};
+let jumpPressed  = false;
+let cameraTouch  = null; // {id, lastX, lastY, moved}
+
+function setupJoystick(zoneEl, knobEl, target, radiusFactor=0.42){
+  let activeId = null;
+  const rect = () => zoneEl.getBoundingClientRect();
+
+  function update(clientX, clientY){
+    const r = rect();
+    const cx = r.left + r.width/2, cy = r.top + r.height/2;
+    let dx = clientX - cx, dy = clientY - cy;
+    const max = r.width * radiusFactor;
+    const len = Math.hypot(dx,dy);
+    if (len > max){ dx = dx/len*max; dy = dy/len*max; }
+    target.x = dx / max;
+    target.y = dy / max;
+    knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+  function reset(){
+    target.x = 0; target.y = 0;
+    knobEl.style.transform = 'translate(0,0)';
+  }
+
+  zoneEl.addEventListener('pointerdown', e => {
+    activeId = e.pointerId;
+    zoneEl.setPointerCapture(activeId);
+    update(e.clientX, e.clientY);
+    e.stopPropagation();
+  });
+  zoneEl.addEventListener('pointermove', e => {
+    if (e.pointerId !== activeId) return;
+    update(e.clientX, e.clientY);
+    e.stopPropagation();
+  });
+  ['pointerup','pointercancel','pointerleave'].forEach(evt =>
+    zoneEl.addEventListener(evt, e => {
+      if (e.pointerId !== activeId) return;
+      activeId = null; reset();
+      e.stopPropagation();
+    })
+  );
+}
+
+function initControls(){
+  setupJoystick(document.getElementById('moveZone'), document.querySelector('#moveZone .stick-knob'), moveStick);
+  setupJoystick(document.getElementById('leftHandZone'), document.querySelector('#leftHandZone .stick-knob'), lhStick);
+  setupJoystick(document.getElementById('rightHandZone'), document.querySelector('#rightHandZone .stick-knob'), rhStick);
+
+  // Bouton SAUT
+  const jumpBtn = document.getElementById('jumpBtn');
+  jumpBtn.addEventListener('pointerdown', e => { jumpPressed = true; e.stopPropagation(); });
+
+  // Bouton LACHER (épée)
+  const dropBtn = document.getElementById('dropBtn');
+  dropBtn.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    if (swordHolder === 'me'){
+      // calcule la direction "avant" du joueur pour propulser l'épée
+      const fwd = getForwardVector();
+      swordVel.set(fwd.x*2 + (Math.random()-0.5)*0.5, 1.5, fwd.z*2 + (Math.random()-0.5)*0.5);
+      sword.position.set(player.pos.x + fwd.x*0.6, player.pos.y - 0.4, player.pos.z + fwd.z*0.6);
+      swordHolder = null;
+      dropCooldown = DROP_COOLDOWN;
+      dropBtn.style.display = 'none';
+      broadcast({type:'sword', action:'drop',
+        pos:[sword.position.x,sword.position.y,sword.position.z],
+        vel:[swordVel.x,swordVel.y,swordVel.z]});
+    }
+  });
+
+  // Maker Pen : toggle
+  const penToggle = document.getElementById('penToggle');
+  penToggle.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    makerPenOn = !makerPenOn;
+    penToggle.classList.toggle('on', makerPenOn);
+    penToggle.textContent = '🖊️ MAKER PEN: ' + (makerPenOn ? 'ON' : 'OFF');
+    document.getElementById('crosshair').style.display = makerPenOn ? 'block' : 'none';
+    document.getElementById('buildMenu').classList.toggle('show', makerPenOn);
+  });
+
+  // Maker Pen : sélection d'objet
+  document.querySelectorAll('.build-item').forEach(el => {
+    el.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      document.querySelectorAll('.build-item').forEach(x => x.classList.remove('selected'));
+      el.classList.add('selected');
+      selectedBuildItem = el.dataset.item;
+    });
+  });
+
+  // Caméra : glissement tactile sur la zone libre de l'écran (canvas)
+  const canvas = document.getElementById('c');
+  canvas.addEventListener('pointerdown', e => {
+    cameraTouch = {id: e.pointerId, lastX: e.clientX, lastY: e.clientY, startX:e.clientX, startY:e.clientY, moved:0};
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!cameraTouch || e.pointerId !== cameraTouch.id) return;
+    const dx = e.clientX - cameraTouch.lastX;
+    const dy = e.clientY - cameraTouch.lastY;
+    player.lon -= dx * LOOK_SENS * 100;
+    player.lat -= dy * LOOK_SENS * 100;
+    player.lat = Math.max(-85, Math.min(85, player.lat));
+    cameraTouch.lastX = e.clientX; cameraTouch.lastY = e.clientY;
+    cameraTouch.moved += Math.abs(dx) + Math.abs(dy);
+  });
+  ['pointerup','pointercancel'].forEach(evt => canvas.addEventListener(evt, e => {
+    if (!cameraTouch || e.pointerId !== cameraTouch.id) return;
+    // Un tap (peu de mouvement) en mode Maker Pen = action de construction / gomme
+    if (makerPenOn && cameraTouch.moved < 8){
+      handleMakerPenTap();
+    }
+    cameraTouch = null;
+  }));
+}
+
+function getForwardVector(){
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  dir.y = 0; dir.normalize();
+  return dir;
+}
+
+/* ----------------------------- ACTION MAKER PEN ----------------------------- */
+function handleMakerPenTap(){
+  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  const hits = raycaster.intersectObjects(buildableTargets, false);
+  if (hits.length === 0) return;
+  const hit = hits[0];
+
+  if (selectedBuildItem === 'eraser'){
+    const bid = hit.object.userData.buildId
+      || (hit.object.parent && hit.object.parent.userData.buildId);
+    if (bid !== undefined) removeBuildItem(bid, true);
+    return;
+  }
+
+  const id = (isHost ? 'H' : 'C') + myId.slice(-4) + '-' + (buildIdCounter++);
+  const color = new THREE.Color().setHSL(Math.random(), 0.55, 0.55);
+  const pos = hit.point.clone().add(hit.face.normal.clone().multiplyScalar(0.01));
+  spawnBuildItem(selectedBuildItem, pos, Math.random()*Math.PI*2, '#'+color.getHexString(), id, true);
+}
+
+/* ===================================================================================
+   5. MISE A JOUR / PHYSIQUE / RENDU
+   =================================================================================== */
+function updateLocalPlayer(dt){
+  if (isDead){
+    respawnTimer -= dt;
+    if (respawnTimer <= 0) respawnPlayer();
+    return;
+  }
+
+  // --- gravité & saut ---
+  player.velY += GRAVITY * dt;
+  player.pos.y += player.velY * dt;
+  if (player.pos.y <= PLAYER_HEIGHT){
+    player.pos.y = PLAYER_HEIGHT;
+    player.velY = 0;
+    player.grounded = true;
+  } else player.grounded = false;
+
+  if (jumpPressed){
+    if (player.grounded){ player.velY = JUMP_FORCE; player.grounded = false; }
+    jumpPressed = false;
+  }
+
+  // --- déplacement (relatif à l'orientation caméra) ---
+  const forward = getForwardVector();
+  const right = new THREE.Vector3(forward.z, 0, -forward.x); // perpendiculaire
+  const move = new THREE.Vector3();
+  move.addScaledVector(forward, -moveStick.y);  // joystick haut = avancer
+  move.addScaledVector(right, moveStick.x);
+  if (move.lengthSq() > 0.0001){
+    move.normalize().multiplyScalar(MOVE_SPEED * dt);
+    player.pos.x += move.x;
+    player.pos.z += move.z;
+  }
+  // limites de la pièce
+  const lim = ROOM_HALF - 0.4;
+  player.pos.x = Math.max(-lim, Math.min(lim, player.pos.x));
+  player.pos.z = Math.max(-lim, Math.min(lim, player.pos.z));
+
+  // --- orientation caméra ---
+  const phi = THREE.MathUtils.degToRad(90 - player.lat);
+  const theta = THREE.MathUtils.degToRad(player.lon);
+  const lookDir = new THREE.Vector3(
+    Math.sin(phi)*Math.cos(theta),
+    Math.cos(phi),
+    Math.sin(phi)*Math.sin(theta)
+  );
+  camera.position.copy(player.pos);
+  camera.lookAt(player.pos.x + lookDir.x, player.pos.y + lookDir.y, player.pos.z + lookDir.z);
+
+  // --- mains (suivent les joysticks, décalées devant le joueur) ---
+  const fwd = getForwardVector();
+  const rgt = new THREE.Vector3(fwd.z,0,-fwd.x);
+  const handBaseY = player.pos.y - 0.35;
+
+  updateHand(leftHandMesh, lhStick, prevHandPos.left, fwd, rgt, handBaseY, -0.35, dt);
+  updateHand(rightHandMesh, rhStick, prevHandPos.right, fwd, rgt, handBaseY, 0.35, dt);
+
+  // --- épée : ramassage / suivi ---
+  updateSword(dt);
+}
+
+function updateHand(mesh, stick, prevPos, fwd, rgt, baseY, sideOffset, dt){
+  const reach = 0.5;
+  const px = player.pos.x + fwd.x*0.45 + rgt.x*(sideOffset + stick.x*0.35);
+  const pz = player.pos.z + fwd.z*0.45 + rgt.z*(sideOffset + stick.x*0.35);
+  const py = baseY - stick.y*0.4;
+
+  prevPos.copy(mesh.position);
+  mesh.position.set(px, py, pz);
+}
+
+function updateSword(dt){
+  if (swordHolder === 'me'){
+    // l'épée suit la main droite
+    sword.position.copy(rightHandMesh.position);
+    sword.rotation.set(Math.PI/2, 0, player.lon * (Math.PI/180));
+
+    // vitesse de la main = vitesse de l'épée -> détection de coup
+    const speed = rightHandMesh.position.distanceTo(prevHandPos.right) / Math.max(dt, 1/120);
+    if (speed > SWORD_HIT_SPEED){
+      for (const id in remotePlayers){
+        const rp = remotePlayers[id];
+        if (rp.target.dead) continue;
+        if (sword.position.distanceTo(rp.group.position) < SWORD_HIT_DIST){
+          broadcast({type:'hit', targetId:id, pos:[rp.group.position.x, rp.group.position.y+0.6, rp.group.position.z]});
+          spawnHitEffect(rp.group.position.clone().add(new THREE.Vector3(0,0.6,0)));
+        }
+      }
+    }
+  } else if (swordHolder === null){
+    // physique au sol : gravité + cooldown anti re-ramassage
+    if (dropCooldown > 0) dropCooldown -= dt;
+
+    sword.position.addScaledVector(swordVel, dt);
+    swordVel.y += GRAVITY * dt;
+    if (sword.position.y <= 0.15){
+      sword.position.y = 0.15;
+      swordVel.y = 0;
+      swordVel.x *= 0.9; swordVel.z *= 0.9; // friction
+    }
+    sword.rotation.set(Math.PI/2, 0, 0);
+
+    // ramassage si le joueur local est proche et hors cooldown
+    if (!isDead && dropCooldown <= 0){
+      const d = Math.hypot(player.pos.x - sword.position.x, player.pos.z - sword.position.z);
+      if (d < SWORD_PICK_DIST){
+        swordHolder = 'me';
+        document.getElementById('dropBtn').style.display = 'flex';
+        broadcast({type:'sword', action:'pickup'});
+      }
+    }
+  } else {
+    // tenue par un joueur distant -> suit sa main droite
+    const rp = remotePlayers[swordHolder];
+    if (rp){
+      sword.position.copy(rp.rightHand.position);
+      sword.position.add(rp.group.position);
+      sword.rotation.set(Math.PI/2, 0, rp.group.rotation.y);
+    }
+  }
+}
+
+function updateRemotePlayers(dt){
+  const lerpFactor = 1 - Math.pow(0.001, dt); // interpolation fluide indépendante du framerate
+  for (const id in remotePlayers){
+    const rp = remotePlayers[id];
+    rp.group.position.lerp(rp.target.pos, lerpFactor);
+    rp.group.rotation.y += (rp.target.rotY - rp.group.rotation.y) * lerpFactor;
+
+    // mains relatives au groupe
+    rp.leftHand.position.lerp(new THREE.Vector3(-0.35 + rp.target.left.x*0.35, 0.05 - rp.target.left.y*0.4, 0.45), lerpFactor);
+    rp.rightHand.position.lerp(new THREE.Vector3(0.35 + rp.target.right.x*0.35, 0.05 - rp.target.right.y*0.4, 0.45), lerpFactor);
+
+    // affichage "mort" : grise le joueur et le surélève
+    const targetY = rp.target.dead ? 2.5 : 0;
+    rp.group.position.y += ((rp.target.pos.y + targetY) - rp.group.position.y) * 0.1;
+    rp.head.material.color.setHex(rp.target.dead ? 0x888888 : 0xffffff);
+  }
+}
+
+function updateBall(dt){
+  ballVel.y += GRAVITY * 0.5 * dt; // gravité atténuée pour un rebond plus "fun"
+  bounceBall.position.addScaledVector(ballVel, dt);
+
+  // rebond sol
+  if (bounceBall.position.y - BALL_RADIUS <= 0){
+    bounceBall.position.y = BALL_RADIUS;
+    ballVel.y = -ballVel.y * BALL_RESTITUTION;
+    ballVel.x *= 0.985; ballVel.z *= 0.985; // friction
+  }
+  // rebond murs
+  const lim = ROOM_HALF - BALL_RADIUS;
+  if (Math.abs(bounceBall.position.x) > lim){
+    bounceBall.position.x = Math.sign(bounceBall.position.x) * lim;
+    ballVel.x = -ballVel.x * BALL_RESTITUTION;
+  }
+  if (Math.abs(bounceBall.position.z) > lim){
+    bounceBall.position.z = Math.sign(bounceBall.position.z) * lim;
+    ballVel.z = -ballVel.z * BALL_RESTITUTION;
+  }
+  bounceBall.rotation.x += ballVel.z * dt;
+  bounceBall.rotation.z -= ballVel.x * dt;
+}
+
+/* ----------------------------- EFFETS VISUELS DE COUP ----------------------------- */
+function spawnHitEffect(position){
+  // flash plein écran si c'est le joueur local
+  const flash = document.getElementById('hitFlash');
+  flash.style.opacity = '0.35';
+  setTimeout(()=> flash.style.opacity = '0', 100);
+
+  // petites particules rouges qui s'écartent puis disparaissent
+  for (let i=0;i<8;i++){
+    const p = new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6), new THREE.MeshBasicMaterial({color:0xff3333, transparent:true}));
+    p.position.copy(position);
+    const dir = new THREE.Vector3((Math.random()-0.5),(Math.random()-0.2),(Math.random()-0.5)).normalize().multiplyScalar(2+Math.random()*2);
+    scene.add(p);
+    hitEffects.push({mesh:p, vel:dir, life:0.6});
+  }
+}
+
+function updateHitEffects(dt){
+  for (let i=hitEffects.length-1; i>=0; i--){
+    const fx = hitEffects[i];
+    fx.life -= dt;
+    fx.mesh.position.addScaledVector(fx.vel, dt);
+    fx.vel.y += GRAVITY*0.6*dt;
+    fx.mesh.material.opacity = Math.max(0, fx.life/0.6);
+    if (fx.life <= 0){ scene.remove(fx.mesh); hitEffects.splice(i,1); }
+  }
+}
+
+/* ----------------------------- MORT / RESPAWN ----------------------------- */
+function killLocalPlayer(){
+  if (isDead) return;
+  isDead = true;
+  respawnTimer = 2.0;
+  document.getElementById('deadOverlay').style.opacity = '1';
+
+  if (swordHolder === 'me'){
+    swordHolder = null;
+    swordVel.set(0,0,0);
+    sword.position.copy(player.pos); sword.position.y = 0.15;
+    dropCooldown = DROP_COOLDOWN;
+    document.getElementById('dropBtn').style.display = 'none';
+    broadcast({type:'sword', action:'drop', pos:[sword.position.x,sword.position.y,sword.position.z], vel:[0,0,0]});
+  }
+  // passe en mode spectateur surélevé
+  player.pos.y = PLAYER_HEIGHT + 3;
+}
+
+function respawnPlayer(){
+  isDead = false;
+  document.getElementById('deadOverlay').style.opacity = '0';
+  const lim = ROOM_HALF - 1.5;
+  player.pos.set((Math.random()*2-1)*lim, PLAYER_HEIGHT, (Math.random()*2-1)*lim);
+  player.velY = 0;
+}
+
+/* ===================================================================================
+   6. BOUCLE RESEAU (envoi d'état à fréquence fixe — optimisation)
+   =================================================================================== */
+function startNetworkLoop(){
+  setInterval(() => {
+    if (Object.keys(connections).length === 0) return;
+    broadcast({
+      type:'state',
+      pos:[player.pos.x, player.pos.y, player.pos.z],
+      rotY: player.lon * (Math.PI/180),
+      leftHand: {x: lhStick.x, y: lhStick.y},
+      rightHand:{x: rhStick.x, y: rhStick.y},
+      dead: isDead
+    });
+
+    // L'hôte fait office d'autorité légère pour la balle (anti-divergence)
+    if (isHost){
+      broadcast({type:'ball', pos:[bounceBall.position.x,bounceBall.position.y,bounceBall.position.z], vel:[ballVel.x,ballVel.y,ballVel.z]});
+    }
+  }, 1000 / NET_SEND_HZ);
+}
+
+/* ===================================================================================
+   7. BOUCLE PRINCIPALE
+   =================================================================================== */
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05); // clamp pour éviter les sauts si onglet en pause
+
+  updateLocalPlayer(dt);
+  updateRemotePlayers(dt);
+  updateBall(dt);
+  updateHitEffects(dt);
+
+  renderer.render(scene, camera);
+}
+</script>
+</body>
+</html>
